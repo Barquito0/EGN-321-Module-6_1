@@ -1,0 +1,36 @@
+name: Python tests and data integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run history tests
+        run: python -m pytest -q
+      - name: Rebuild from source and check generated reports
+        run: |
+          python build_history.py
+          python - <<'PY'
+          from pathlib import Path
+          import sqlite3
+          p=Path('sensor_history.db')
+          assert p.exists()
+          conn=sqlite3.connect(p)
+          count=conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
+          assert count == 8780, count
+          conn.close()
+          for name in ('last_hour', 'last_day', 'full_history'):
+              assert Path('reports', name+'.md').is_file()
+              assert Path('reports', name+'.json').is_file()
+              assert Path('plots', name+'.png').is_file()
+          PY
