@@ -1,0 +1,27 @@
+{
+  "sensor": "temperature",
+  "start": "2026-10-01T14:00:00",
+  "end": "2026-10-02T14:00:00",
+  "expected": 1441,
+  "received": 1421,
+  "missing": 20,
+  "completeness_pct": 98.6120749479528,
+  "accepted": 1419,
+  "rejected": 2,
+  "accepted_min": 19.29,
+  "accepted_max": 24.62,
+  "accepted_mean": 22.014982381959125,
+  "statuses": {
+    "OK": 1419,
+    "OUT_OF_RANGE": 2
+  },
+  "gaps": [
+    {
+      "after": "2026-10-02T05:59:00",
+      "before": "2026-10-02T06:20:00",
+      "duration_seconds": 1260.0,
+      "missing_slots": 20
+    }
+  ],
+  "largest_gap_seconds": 1260.0
+}
