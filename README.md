@@ -1,39 +1,76 @@
-# EGN 321 — Module 6.1 SQLite History Builder
+# EGN 321 — Module 6, Assignment 6.1: SQLite History Builder
 
-This project imports an instructor-provided virtual-sensor history into SQLite, calculates last-hour, last-day and full-history completeness, detects gaps, and plots measurements **without joining observations across missing periods**.
+## What this project does
 
-**Source:** `module6_sample_sensor_history.csv` (instructor practice data, not a personal Velxio capture). Each input row has a timestamp and five sensor readings: temperature (°C), humidity (%), light (raw), distance (cm), potentiometer (%). Original CSV timestamps are retained, not reconstructed; timezone unspecified.
+Imports the **instructor-supplied** `module6_sample_sensor_history.csv` into SQLite, queries three anchored historical windows, identifies absent timestamp slots, and draws **gap-preserving** plots. The CSV was supplied with the Module 6 assignment. It is not represented as data captured from the student's personal Velxio simulation. This distinction matters when interpreting the evidence.
 
-**Sample interval:** 60 seconds per sensor. Last-hour/day windows are anchored to the latest stored timestamp, not the wall clock.
+**Source dataset:** `data/module6_sample_sensor_history.csv` (1,756 timestamped records, five sensors per row).  
+**Timestamp source:** original ISO timestamps provided in the CSV; **not reconstructed**.  
+**Timestamp time zone:** unspecified by the source CSV; reports use the CSV's clock time without claiming a zone.  
+**Nominal frequency:** one reading per minute per sensor (`60 seconds`).  
+**Sensors:** temperature (°C), humidity (%), light (raw sensor units), distance (cm), potentiometer (%).  
+**Primary report sensor:** temperature, with all five sensors stored in the database.
 
-## Evidence summary — temperature
+The source includes two missing periods in the **temperature timestamp sequence**, which are also missing for the other sensors because each CSV row contains all five:
 
-| Window | Expected | Received | Missing | Completeness |
-|---|---:|---:|---:|---:|
-| Last hour | 61 | 61 | 0 | 100% |
-| Last day | 1441 | 1421 | 20 | 98.61% |
-| Full history | 1801 | 1756 | 45 | 97.50% |
+| Last reading before interruption | First reading after interruption | Elapsed interval | Expected samples not present |
+|---|---|---:|---:|
+| 2026-10-01 13:09 | 2026-10-01 13:35 | 26 minutes | 25 |
+| 2026-10-02 05:59 | 2026-10-02 06:20 | 21 minutes | 20 |
 
-Gaps: Oct 1, 2026 13:09→13:35 (25 absent samples) and Oct 2, 2026 05:59→06:20 (20 absent samples). The largest timestamp separation is 26 minutes.
+A gap is detected when neighboring received timestamps are separated by more than `1.5 × expected sampling interval` (90 seconds). With timestamps on the 60-second cadence, missing-slot count is `round(elapsed_seconds / 60) - 1`. This identifies absent **rows in time**, not rows that were received and marked invalid. Those are separate quality issues.
 
-## SQLite model
+## SQLite schema and traceability
 
-Table `readings` stores `sensor, sample_number, timestamp, raw_value, accepted_value, unit, status, decision, reason, timestamp_source`. Index: `(sensor, timestamp)`. A rejected reading still counts as received for time completeness. No synthetic timestamp rows are inserted.
+The database `sensor_history.db` includes table `readings` and an index on `(sensor, timestamp)`. Each sensor-specific record preserves:
 
-## Running
+`(sensor, sample_number, timestamp, raw_value, accepted_value, unit, status, decision, reason, timestamp_source)`.
 
-```sh
+The importer retains a reading's raw numeric value even when the source status is not `OK`, while `accepted_value` becomes `NULL` for a rejected reading. A nonnumeric or missing raw cell also results in a `NULL` accepted value. The source status is preserved **exactly** and the derived acceptance decision is recorded separately. Classroom acceptance requires source `OK`, a finite numeric value, and (for temperature/humidity/potentiometer) a documented physical/domain range. No missing timestamp rows are inserted. A received but invalid reading still counts as **received** for temporal completeness.
+
+## Three time windows, all anchored to stored data
+
+The last-hour and last-day reports use the **latest timestamp actually stored**, not today's wall clock. Windows are inclusive (`>= start` and `<= end`), so a complete hour has 61 minute-aligned sample slots, and a complete 24-hour period has 1,441 slots.
+
+| Temperature view | Start | End | Expected | Received | Missing | Completeness | Largest time separation |
+|---|---|---|---:|---:|---:|---:|---:|
+| Last hour | Oct 2, 13:00 | Oct 2, 14:00 | 61 | 61 | 0 | 100.00% | 1 minute (normal cadence; **0 detected gaps**) |
+| Last day | Oct 1, 14:00 | Oct 2, 14:00 | 1,441 | 1,421 | 20 | 98.61% | 21 minutes |
+| Full history | Oct 1, 08:00 | Oct 2, 14:00 | 1,801 | 1,756 | 45 | 97.50% | 26 minutes |
+
+All three windows are for the temperature sensor, but the data structure supports querying the other four sensors using `summarize(conn, sensor='humidity', ...)` and similar calls. The detailed reports are in `reports/`, including machine-readable `.json` versions.
+
+## Interpretation and limitations
+
+The observed readings support statements about **measured times only**. In particular, the data cannot establish what happened inside the 25-minute and 20-minute unobserved periods. No interpolation, averaging across a gap, synthetic insertion, or chart-line connection across a gap is performed. In `src/plots.py`, a NaN break is inserted in the **plotting arrays only**, not the SQLite table or source CSV, when successive timestamps are separated by a gap. Rejected values also plot as missing rather than a false trusted observation.
+
+The datasets are classroom simulation evidence, not calibrated measurements; nominal cadence is inferred from the consistent source timestamps; no time zone is supplied; sensor-specific thresholds are simplified classroom policies, not device calibration specifications. The source offers temperature statuses such as `OUT_OF_RANGE`, which we preserve, but the database does not silently treat them as accepted measurements.
+
+## How to run
+
+From the repository root:
+
+```bash
 python -m pip install -r requirements.txt
 python build_history.py
 python -m pytest -q
 ```
 
-The builder regenerates `sensor_history.db`, reports in `reports/`, and gap-preserving plots in `plots/`.
+`build_history.py` recreates `sensor_history.db` from the unchanged instructor-provided CSV and writes:
 
-## Honesty & limitations
+- `reports/last_hour.md` and `.json`
+- `reports/last_day.md` and `.json`
+- `reports/full_history.md` and `.json`
+- `plots/last_hour.png`
+- `plots/last_day.png`
+- `plots/full_history.png`
 
-There are **no measurements inside gaps**. Neither plotted lines nor summary averages represent conditions inside the gaps. Timestamp timezone is not provided. Classroom sensor statuses and acceptance thresholds are not device calibration claims. Do not substitute the instructor dataset for the student's own Velxio dataset without disclosure.
+`src/history.py` contains the SQLite schema, import, query, and gap algorithms. `src/plots.py` creates disconnected time series. Tests under `tests/` cover actual database logging, gap detection/completeness, and latest-timestamp anchored windows.
 
-## Source / submission
+## GitHub repository
 
-Instructor CSV: `data/module6_sample_sensor_history.csv`. The complete downloadable submission bundle also contains `sensor_history.db`, three reports and PNG plots. [Source GitHub repository](https://github.com/Barquito0/EGN-321-Module-6_1).
+**GitHub repository:** https://github.com/Barquito0/EGN-321-Module-6_1
+
+## Instructor example alignment
+
+The accompanying student guide emphasizes traceability, last-hour/day/full-history views, gap detection, and explicit limitations. The worked example cautions that a plot must not connect observations across an unmeasured period. This implementation follows those rules.
